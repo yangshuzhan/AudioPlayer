@@ -1,0 +1,176 @@
+<style>
+  .chart-container {
+    display: grid;
+    grid-template-columns: 40px auto;
+    grid-template-rows: auto 20px;
+    grid-template-areas:
+      "y-axis canvas"
+      "y-axis x-axis";
+    align-items: center;
+    font-family: sans-serif;
+    color: #888;
+    width: 600px;
+  }
+  .y-axis {
+    grid-area: y-axis;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 200px;
+    padding-top: 10px;
+    padding-bottom: 20px;
+  }
+  .y-axis div {
+    text-align: right;
+    padding-right: 5px;
+    line-height: 1;
+  }
+  .x-axis {
+    grid-area: x-axis;
+    display: flex;
+    justify-content: space-between;
+    padding-left: 30px;
+  }
+  .x-axis div {
+    text-align: center;
+    width: 1px; /* 标签本身宽度由外层间距控制 */
+  }
+  #canvas {
+    grid-area: canvas;
+    background: black;
+  }
+</style>
+
+<button id="btnMic">🎤 使用麦克风</button>
+<button id="btnLoad">▶️ 加载URL音频</button>
+<br>
+<input id="inputURL" type="text" placeholder="输入音频链接，留空可选本地文件"
+       style="width:300px;"
+       value="https://cdn.pixabay.com/audio/2025/06/23/audio_e6a00ad257.mp3">
+<input id="inputFile" type="file" accept="audio/*">
+
+<div class="chart-container">
+  <div class="y-axis" id="yAxis">
+    <!-- JS 会填充振幅刻度 -->
+  </div>
+  <canvas id="canvas" width="600" height="200"></canvas>
+  <div class="x-axis" id="xAxis">
+    <!-- JS 会填充频率刻度 -->
+  </div>
+</div>
+
+<script>
+  const ctx         = canvas.getContext("2d");
+  const audioEl     = new Audio();
+  audioEl.crossOrigin = "anonymous";
+  audioEl.controls = true 
+  document.body.appendChild(audioEl);
+
+  const audioContext = new (window.AudioContext)({latencyHint:"interactive"});
+  const analyser     = audioContext.createAnalyser();
+  analyser.fftSize   = 512;
+  const binCount     = analyser.frequencyBinCount;
+  const dataArray    = new Uint8Array(binCount);
+  let sourceNode, micSource;
+
+  // 创建 MediaElementSource
+  const elemSource = audioContext.createMediaElementSource(audioEl);
+
+  // 填充 Y 轴（振幅 0–128）
+  function initYAxis() {
+    yAxis.innerHTML = "";
+    for (let i = 0; i <= 4; i++) {
+      const amp = ((4 - i) * 128 / 4).toFixed(0);
+      const div = document.createElement("div");
+      div.textContent = amp;
+      yAxis.appendChild(div);
+    }
+  }
+
+  // 填充 X 轴（0–Nyquist）
+  function initXAxis() {
+    xAxis.innerHTML = "";
+    const nyquist = audioContext.sampleRate / 2;
+    for (let i = 0; i <= 4; i++) {
+      const freq = ((nyquist / 4) * i / 1000).toFixed(1) + "k";
+      const div = document.createElement("div");
+      div.textContent = freq;
+      xAxis.appendChild(div);
+    }
+  }
+
+  function connect(node) {
+    if (sourceNode) sourceNode.disconnect();
+    sourceNode = node;
+    sourceNode.connect(analyser);
+    analyser.connect(audioContext.destination);
+  }
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "cyan";
+  function draw() {
+    requestAnimationFrame(draw);
+    analyser.getByteFrequencyData(dataArray);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.beginPath();
+    const sliceW   = canvas.width / binCount;
+    let x = 0;
+    ctx.moveTo(0, 0);
+    for (let i = 0; i < binCount; i++) {
+      const y = canvas.height - (dataArray[i] *canvas.height / 256);
+      ctx.lineTo(x, y);
+      x += sliceW;
+    }
+    ctx.stroke();
+  }
+  draw()
+  // 使用麦克风
+  async function useMic() {
+    btnMic.disabled = true;
+    if (!micSource) {
+      const stream  = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false ,latency:0.1}
+      });
+      micSource = audioContext.createMediaStreamSource(stream);
+    }
+    if (audioContext.state==="suspended") await audioContext.resume();
+    connect(micSource);
+    btnMic.disabled = false;
+  }
+
+   // 切到 URL 音频
+  function useURL() {
+    const url = inputURL.value.trim();
+    if (!url) return alert("请输入有效的音频链接");
+    audioEl.src = url;
+    audioEl.onplay = async () => {
+      if (audioContext.state === "suspended") await audioContext.resume();
+      connect(elemSource);
+    };
+    audioEl.play().catch(e => alert("播放失败：" + e.message));
+  }
+
+  // 切到本地文件
+  function useFile(file) {
+    const url = URL.createObjectURL(file);
+    audioEl.src = url;
+    audioEl.onplay = async () => {
+      if (audioContext.state === "suspended") await audioContext.resume();
+      connect(elemSource);
+    };
+    audioEl.play();
+  }
+  
+
+
+  // 事件绑定
+  btnMic.addEventListener("click", useMic);
+  btnLoad.addEventListener("click", useURL);
+  inputFile.addEventListener("change", () => {
+    if (inputFile.files.length) useFile(inputFile.files[0]);
+  });
+
+  // 初始化坐标轴
+  initYAxis();
+  initXAxis();
+</script>
